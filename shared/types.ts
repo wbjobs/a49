@@ -44,3 +44,35 @@ export interface SuggestResponse {
   additionalCells: { row: number; col: number }[];
   reason: string;
 }
+
+export interface BatchSimulateRequest {
+  matrix: number[][];
+  strategies: {
+    label: string;
+    selectedCells: { row: number; col: number }[];
+  }[];
+}
+
+export interface StrategyRunSummary {
+  label: string;
+  success: boolean;
+  matchRate: number;
+  selectedCount: number;
+  dataTransmission: number;
+  conflictCount: number;
+  rowConflicts: number;
+  colConflicts: number;
+  iterCount: number;
+  totalMs: number;
+  refineMs: number;
+  permuteMs: number;
+  conflicts: ConflictInfo[] | null;
+  bobView: (number | null)[][] | null;
+  permutationP: number[];
+  permutationQ: number[];
+}
+
+export interface BatchSimulateResponse {
+  results: StrategyRunSummary[];
+  totalMs: number;
+}

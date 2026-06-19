@@ -1,111 +1,165 @@
-import { useStore } from "@/store/useStore";
+import { useStore, type StrategyRunResult } from "@/store/useStore";
+import { StrategySelector } from "./StrategySelector";
+import { STRATEGY_PRESETS } from "../../shared/strategies";
+
+const COLOR_A = "#00d4ff";
+const COLOR_B = "#ff88aa";
 
 export default function ControlPanel() {
-  const {
-    rows,
-    cols,
-    density,
-    selectedCells,
-    matrix,
-    viewMode,
-    simulatePhase,
-    setRows,
-    setCols,
-    setDensity,
-    selectAll,
-    clearSelection,
-    generateRandom,
-    setViewMode,
-    setSimulatePhase,
-    setSimulationResult,
-    setSuggestedCells,
-    reset,
-  } = useStore();
+  const state = useStore();
 
-  const selectedCount = selectedCells.size;
-  const totalCells = rows * cols;
+  const selectedCount = state.selectedCells.size;
+  const totalCells = state.rows * state.cols;
 
   const handleSimulate = async () => {
     if (selectedCount === 0) return;
 
-    setViewMode("simulate");
-    setSimulatePhase("sending");
+    state.setViewMode("simulate");
+    state.setSimulatePhase("sending");
 
-    const cells = Array.from(selectedCells).map((key) => {
+    const cells = Array.from(state.selectedCells).map((key) => {
       const [row, col] = key.split(",").map(Number);
       return { row, col };
     });
 
     await delay(800);
-    setSimulatePhase("permuting");
+    state.setSimulatePhase("permuting");
 
     try {
       const res = await fetch("/api/matrix/simulate", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ matrix, selectedCells: cells }),
+        body: JSON.stringify({ matrix: state.matrix, selectedCells: cells }),
       });
       const data = await res.json();
 
       await delay(1000);
-      setSimulatePhase("reconstructing");
+      state.setSimulatePhase("reconstructing");
 
       await delay(800);
-      setSimulationResult(data);
+      state.setSimulationResult(data);
 
       if (!data.success && data.conflicts) {
         const sugRes = await fetch("/api/matrix/suggest", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
-            matrix,
+            matrix: state.matrix,
             selectedCells: cells,
             conflicts: data.conflicts,
           }),
         });
         const sugData = await sugRes.json();
-        setSuggestedCells(sugData.additionalCells);
+        state.setSuggestedCells(sugData.additionalCells);
       }
     } catch {
-      setSimulatePhase("idle");
-      setViewMode("edit");
+      state.setSimulatePhase("idle");
+      state.setViewMode("edit");
+    }
+  };
+
+  const handleCompare = async () => {
+    if (state.strategyA.selectedCells.size === 0 || state.strategyB.selectedCells.size === 0) {
+      return;
+    }
+    state.setComparePhase("running");
+
+    const cellsToArray = (s: Set<string>) =>
+      Array.from(s).map((k) => {
+        const [r, c] = k.split(",").map(Number);
+        return { row: r, col: c };
+      });
+
+    const presetA = STRATEGY_PRESETS.find((p) => p.type === state.strategyA.type)!;
+    const presetB = STRATEGY_PRESETS.find((p) => p.type === state.strategyB.type)!;
+
+    await delay(600);
+    try {
+      const res = await fetch("/api/matrix/batch-simulate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          matrix: state.matrix,
+          strategies: [
+            { label: presetA.name, selectedCells: cellsToArray(state.strategyA.selectedCells) },
+            { label: presetB.name, selectedCells: cellsToArray(state.strategyB.selectedCells) },
+          ],
+        }),
+      });
+      const data = await res.json();
+      const [a, b] = data.results as StrategyRunResult[];
+      state.setCompareResults(a, b);
+    } catch {
+      state.setComparePhase("idle");
     }
   };
 
   const handleBackToEdit = () => {
-    setViewMode("edit");
-    setSimulatePhase("idle");
+    state.setViewMode("edit");
+    state.setSimulatePhase("idle");
   };
 
   const handleNewMatrix = () => {
-    generateRandom();
+    state.generateRandom();
+    setTimeout(() => {
+      if (state.compareMode) {
+        state.applyStrategyToSelection("A");
+        state.applyStrategyToSelection("B");
+      }
+    }, 50);
   };
 
   return (
     <div className="flex flex-col gap-4 text-sm">
-      <div className="flex items-center gap-2 mb-2">
-        <div className="w-2 h-2 rounded-full bg-[#00ff88] animate-pulse" />
-        <span className="text-[#00ff88] font-mono text-xs tracking-wider uppercase">
-          通信协议沙盘
-        </span>
+      <div className="flex items-center justify-between mb-2">
+        <div className="flex items-center gap-2">
+          <div className="w-2 h-2 rounded-full bg-[#00ff88] animate-pulse" />
+          <span className="text-[#00ff88] font-mono text-xs tracking-wider uppercase">
+            通信协议沙盘
+          </span>
+        </div>
+        <button
+          onClick={() => {
+            state.setCompareMode(!state.compareMode);
+            if (!state.compareMode) {
+              setTimeout(() => {
+                state.setStrategy("A", state.strategyA.type);
+                state.setStrategy("B", state.strategyB.type);
+              }, 50);
+            }
+          }}
+          className={`px-3 py-1 rounded-full text-[10px] font-bold tracking-wider border transition-all ${
+            state.compareMode
+              ? "bg-purple-500/15 border-purple-400/50 text-purple-300"
+              : "bg-gray-800 border-gray-600/50 text-gray-400 hover:border-purple-400/30 hover:text-purple-300"
+          }`}
+        >
+          {state.compareMode ? "◈ 策略对比中" : "◈ 策略对比模式"}
+        </button>
       </div>
 
-      {viewMode === "edit" && (
+      {!state.compareMode && state.viewMode === "edit" && (
         <>
           <Section title="矩阵参数">
             <FieldRow label="行数">
-              <SliderInput value={rows} min={2} max={12} onChange={setRows} />
+              <SliderInput value={state.rows} min={2} max={30} onChange={(v) => {
+                state.setRows(v);
+                state.clearSelection();
+              }} />
             </FieldRow>
             <FieldRow label="列数">
-              <SliderInput value={cols} min={2} max={12} onChange={setCols} />
+              <SliderInput value={state.cols} min={2} max={30} onChange={(v) => {
+                state.setCols(v);
+                state.clearSelection();
+              }} />
             </FieldRow>
             <FieldRow label="1的概率">
               <SliderInput
-                value={density}
+                value={state.density}
                 min={0.1}
                 max={0.9}
                 step={0.05}
-                onChange={setDensity}
+                onChange={state.setDensity}
               />
             </FieldRow>
             <button
@@ -119,13 +173,13 @@ export default function ControlPanel() {
           <Section title="选择格子">
             <div className="flex gap-2">
               <button
-                onClick={selectAll}
+                onClick={state.selectAll}
                 className="flex-1 px-2 py-1.5 rounded bg-[#1a1a2e] border border-[#00ff88]/30 text-[#00ff88] hover:bg-[#00ff88]/10 transition-all text-xs"
               >
                 全选
               </button>
               <button
-                onClick={clearSelection}
+                onClick={state.clearSelection}
                 className="flex-1 px-2 py-1.5 rounded bg-[#1a1a2e] border border-[#ff3355]/30 text-[#ff3355] hover:bg-[#ff3355]/10 transition-all text-xs"
               >
                 清除
@@ -154,29 +208,106 @@ export default function ControlPanel() {
         </>
       )}
 
-      {viewMode === "simulate" && (
+      {state.compareMode && (
+        <>
+          <Section title="矩阵参数 (对比共享)">
+            <FieldRow label="行数">
+              <SliderInput value={state.rows} min={2} max={30} onChange={(v) => {
+                state.setRows(v);
+                setTimeout(() => {
+                  state.applyStrategyToSelection("A");
+                  state.applyStrategyToSelection("B");
+                }, 30);
+              }} />
+            </FieldRow>
+            <FieldRow label="列数">
+              <SliderInput value={state.cols} min={2} max={30} onChange={(v) => {
+                state.setCols(v);
+                setTimeout(() => {
+                  state.applyStrategyToSelection("A");
+                  state.applyStrategyToSelection("B");
+                }, 30);
+              }} />
+            </FieldRow>
+            <FieldRow label="1的概率">
+              <SliderInput
+                value={state.density}
+                min={0.1}
+                max={0.9}
+                step={0.05}
+                onChange={state.setDensity}
+              />
+            </FieldRow>
+            <button
+              onClick={handleNewMatrix}
+              className="w-full mt-1 px-3 py-1.5 rounded bg-[#1a1a2e] border border-purple-400/30 text-purple-300 hover:bg-purple-400/10 hover:border-purple-400/60 transition-all text-xs"
+            >
+              ↻ 生成新矩阵 & 刷新策略
+            </button>
+          </Section>
+
+          <StrategySelector which="A" accentColor={COLOR_A} />
+          <StrategySelector which="B" accentColor={COLOR_B} />
+
+          <button
+            onClick={handleCompare}
+            disabled={
+              state.comparePhase === "running" ||
+              state.strategyA.selectedCells.size === 0 ||
+              state.strategyB.selectedCells.size === 0
+            }
+            className={`w-full px-4 py-3 rounded-lg font-bold text-sm transition-all ${
+              state.comparePhase === "running"
+                ? "bg-gray-700 text-gray-400 cursor-wait"
+                : "bg-gradient-to-r from-[#00d4ff] via-[#aa88ff] to-[#ff88aa] text-[#0a0a0f] hover:shadow-[0_0_25px_rgba(170,136,255,0.45)]"
+            } disabled:opacity-40`}
+          >
+            {state.comparePhase === "running" ? (
+              <span className="flex items-center justify-center gap-2">
+                <span className="inline-block w-3 h-3 border-2 border-gray-300 border-t-transparent rounded-full animate-spin" />
+                后端并行计算中…
+              </span>
+            ) : state.comparePhase === "done" ? (
+              "↻ 重新运行对比"
+            ) : (
+              "⚡ 开始对比两种策略"
+            )}
+          </button>
+
+          {state.comparePhase === "done" && (
+            <button
+              onClick={state.clearCompareResults}
+              className="w-full px-3 py-1.5 rounded bg-[#1a1a2e] border border-gray-600/40 text-gray-400 hover:text-gray-200 hover:border-gray-500 transition-all text-xs"
+            >
+              清除对比结果
+            </button>
+          )}
+        </>
+      )}
+
+      {!state.compareMode && state.viewMode === "simulate" && (
         <>
           <Section title="协议模拟">
             <PhaseIndicator
               label="Alice 发送数据"
-              active={simulatePhase === "sending"}
-              done={simulatePhase !== "sending" && simulatePhase !== "idle"}
+              active={state.simulatePhase === "sending"}
+              done={state.simulatePhase !== "sending" && state.simulatePhase !== "idle"}
             />
             <PhaseIndicator
               label="交互库施加排列"
-              active={simulatePhase === "permuting"}
+              active={state.simulatePhase === "permuting"}
               done={
-                simulatePhase === "reconstructing" || simulatePhase === "done"
+                state.simulatePhase === "reconstructing" || state.simulatePhase === "done"
               }
             />
             <PhaseIndicator
               label="Bob 重构矩阵"
-              active={simulatePhase === "reconstructing"}
-              done={simulatePhase === "done"}
+              active={state.simulatePhase === "reconstructing"}
+              done={state.simulatePhase === "done"}
             />
           </Section>
 
-          {simulatePhase === "done" && (
+          {state.simulatePhase === "done" && (
             <Section title="重构结果">
               <ResultBadge success={useStore.getState().success} />
               <div className="text-xs text-gray-400 mt-1">
@@ -187,14 +318,12 @@ export default function ControlPanel() {
               </div>
               <div className="text-xs text-gray-400">
                 选中格子:{" "}
-                <span className="text-[#00ff88] font-mono">
-                  {selectedCount}
-                </span>
+                <span className="text-[#00ff88] font-mono">{selectedCount}</span>
               </div>
             </Section>
           )}
 
-          {simulatePhase === "done" && (
+          {state.simulatePhase === "done" && (
             <div className="flex gap-2">
               <button
                 onClick={handleBackToEdit}
@@ -203,7 +332,7 @@ export default function ControlPanel() {
                 ← 返回编辑
               </button>
               <button
-                onClick={reset}
+                onClick={state.reset}
                 className="flex-1 px-3 py-2 rounded-lg bg-[#1a1a2e] border border-[#ff3355]/30 text-[#ff3355] hover:bg-[#ff3355]/10 transition-all text-xs"
               >
                 重置
@@ -322,7 +451,7 @@ function ResultBadge({ success }: { success: boolean }) {
 }
 
 function RowColStats() {
-  const { rows, cols, selectedCells, matrix } = useStore();
+  const { rows, cols, selectedCells } = useStore();
 
   const rowCounts = Array.from({ length: rows }, (_, i) => {
     let count = 0;

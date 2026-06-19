@@ -1,8 +1,36 @@
 import { create } from "zustand";
 import type { ConflictInfo } from "../../shared/types";
+import type { StrategyType, StrategyConfig } from "../../shared/strategies";
+import { generateStrategyCells, STRATEGY_PRESETS } from "../../shared/strategies";
 
-export type ViewMode = "edit" | "simulate" | "conflict";
+export type ViewMode = "edit" | "simulate" | "conflict" | "compare";
 export type SimulatePhase = "idle" | "sending" | "permuting" | "reconstructing" | "done";
+export type ComparePhase = "idle" | "running" | "done";
+
+export interface StrategyRunResult {
+  success: boolean;
+  matchRate: number;
+  selectedCount: number;
+  dataTransmission: number;
+  conflictCount: number;
+  rowConflicts: number;
+  colConflicts: number;
+  iterCount: number;
+  totalMs: number;
+  refineMs: number;
+  permuteMs: number;
+  conflicts: ConflictInfo[] | null;
+  bobView: (number | null)[][] | null;
+  permutationP: number[];
+  permutationQ: number[];
+}
+
+export interface StrategyState {
+  type: StrategyType;
+  config: StrategyConfig;
+  selectedCells: Set<string>;
+  result: StrategyRunResult | null;
+}
 
 interface AppState {
   matrix: number[][];
@@ -26,6 +54,11 @@ interface AppState {
   conflictRows: Set<number>;
   conflictCols: Set<number>;
   suggestedCells: Set<string>;
+
+  compareMode: boolean;
+  comparePhase: ComparePhase;
+  strategyA: StrategyState;
+  strategyB: StrategyState;
 
   setMatrix: (matrix: number[][]) => void;
   setRows: (rows: number) => void;
@@ -51,6 +84,14 @@ interface AppState {
   setSuggestedCells: (cells: { row: number; col: number }[]) => void;
   reset: () => void;
   generateRandom: () => void;
+
+  setCompareMode: (enabled: boolean) => void;
+  setComparePhase: (phase: ComparePhase) => void;
+  setStrategy: (which: "A" | "B", type: StrategyType, config?: StrategyConfig) => void;
+  applyStrategyToSelection: (which: "A" | "B") => void;
+  setStrategyResult: (which: "A" | "B", result: StrategyRunResult | null) => void;
+  setCompareResults: (a: StrategyRunResult | null, b: StrategyRunResult | null) => void;
+  clearCompareResults: () => void;
 }
 
 const DEFAULT_ROWS = 5;
@@ -62,6 +103,36 @@ function createRandomMatrix(rows: number, cols: number, density: number): number
     Array.from({ length: cols }, () => (Math.random() < density ? 1 : 0))
   );
 }
+
+function cellsToSet(cells: { row: number; col: number }[]): Set<string> {
+  const s = new Set<string>();
+  for (const c of cells) s.add(`${c.row},${c.col}`);
+  return s;
+}
+
+function createDefaultStrategyState(typeA: StrategyType, typeB: StrategyType): {
+  strategyA: StrategyState;
+  strategyB: StrategyState;
+} {
+  const presetA = STRATEGY_PRESETS.find((p) => p.type === typeA)!;
+  const presetB = STRATEGY_PRESETS.find((p) => p.type === typeB)!;
+  return {
+    strategyA: {
+      type: typeA,
+      config: { ...presetA.defaultConfig },
+      selectedCells: new Set<string>(),
+      result: null,
+    },
+    strategyB: {
+      type: typeB,
+      config: { ...presetB.defaultConfig },
+      selectedCells: new Set<string>(),
+      result: null,
+    },
+  };
+}
+
+const defaultStrategies = createDefaultStrategyState("cross", "main_diagonal");
 
 export const useStore = create<AppState>((set, get) => ({
   matrix: createRandomMatrix(DEFAULT_ROWS, DEFAULT_COLS, DEFAULT_DENSITY),
@@ -85,6 +156,10 @@ export const useStore = create<AppState>((set, get) => ({
   conflictRows: new Set<number>(),
   conflictCols: new Set<number>(),
   suggestedCells: new Set<string>(),
+
+  compareMode: false,
+  comparePhase: "idle",
+  ...defaultStrategies,
 
   setMatrix: (matrix) => set({ matrix }),
   setRows: (rows) => set({ rows }),
@@ -169,6 +244,9 @@ export const useStore = create<AppState>((set, get) => ({
       conflictRows: new Set<number>(),
       conflictCols: new Set<number>(),
       suggestedCells: new Set<string>(),
+      compareMode: false,
+      comparePhase: "idle",
+      ...createDefaultStrategyState("cross", "main_diagonal"),
     }),
 
   generateRandom: () =>
@@ -188,5 +266,69 @@ export const useStore = create<AppState>((set, get) => ({
       conflictRows: new Set<number>(),
       conflictCols: new Set<number>(),
       suggestedCells: new Set<string>(),
+      comparePhase: "idle",
+      strategyA: { ...state.strategyA, result: null, selectedCells: new Set() },
+      strategyB: { ...state.strategyB, result: null, selectedCells: new Set() },
+    })),
+
+  setCompareMode: (enabled) =>
+    set({
+      compareMode: enabled,
+      comparePhase: "idle",
+      viewMode: enabled ? "compare" : "edit",
+      ...(enabled ? createDefaultStrategyState("cross", "main_diagonal") : {}),
+    }),
+
+  setComparePhase: (comparePhase) => set({ comparePhase }),
+
+  setStrategy: (which, type, config) => {
+    const state = get();
+    const key = which === "A" ? "strategyA" : "strategyB";
+    const preset = STRATEGY_PRESETS.find((p) => p.type === type);
+    if (!preset) return;
+    const finalConfig = config ?? state[key].config;
+    const cells = generateStrategyCells(state.rows, state.cols, type, finalConfig);
+    set({
+      [key]: {
+        type,
+        config: finalConfig,
+        selectedCells: cellsToSet(cells),
+        result: null,
+      },
+    } as Partial<AppState>);
+  },
+
+  applyStrategyToSelection: (which) => {
+    const state = get();
+    const key = which === "A" ? "strategyA" : "strategyB";
+    const cells = generateStrategyCells(state.rows, state.cols, state[key].type, state[key].config);
+    set({
+      [key]: {
+        ...state[key],
+        selectedCells: cellsToSet(cells),
+        result: null,
+      },
+    } as Partial<AppState>);
+  },
+
+  setStrategyResult: (which, result) => {
+    const key = which === "A" ? "strategyA" : "strategyB";
+    set((state) => ({
+      [key]: { ...state[key], result },
+    } as Partial<AppState>));
+  },
+
+  setCompareResults: (a, b) =>
+    set((state) => ({
+      strategyA: { ...state.strategyA, result: a },
+      strategyB: { ...state.strategyB, result: b },
+      comparePhase: "done",
+    })),
+
+  clearCompareResults: () =>
+    set((state) => ({
+      strategyA: { ...state.strategyA, result: null },
+      strategyB: { ...state.strategyB, result: null },
+      comparePhase: "idle",
     })),
 }));

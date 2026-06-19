@@ -8,6 +8,12 @@ import {
 import { EffectComposer, Bloom } from "@react-three/postprocessing";
 import * as THREE from "three";
 import { useStore } from "@/store/useStore";
+import { STRATEGY_PRESETS } from "../../shared/strategies";
+
+const COLOR_A = "#00d4ff";
+const COLOR_B = "#ff88aa";
+
+type CellVariant = "default" | "strategyA" | "strategyB";
 
 function Cell({
   row,
@@ -23,6 +29,7 @@ function Cell({
   onClick,
   onPointerOver,
   onPointerOut,
+  variant = "default",
 }: {
   row: number;
   col: number;
@@ -37,9 +44,12 @@ function Cell({
   onClick: () => void;
   onPointerOver: () => void;
   onPointerOut: () => void;
+  variant?: CellVariant;
 }) {
   const meshRef = useRef<THREE.Mesh>(null);
   const glowRef = useRef<THREE.PointLight>(null);
+
+  const accentColor = variant === "strategyA" ? COLOR_A : variant === "strategyB" ? COLOR_B : "#00ff88";
 
   const offsetX = (col - totalCols / 2 + 0.5) * 1.3;
   const offsetZ = (row - totalRows / 2 + 0.5) * 1.3;
@@ -47,8 +57,8 @@ function Cell({
   const baseColor = useMemo(() => {
     if (isConflictRow || isConflictCol) return value === 1 ? "#ff3355" : "#550011";
     if (isSuggested) return "#ffaa00";
-    return value === 1 ? "#00ff88" : "#1a1a2e";
-  }, [value, isConflictRow, isConflictCol, isSuggested]);
+    return value === 1 ? accentColor : "#1a1a2e";
+  }, [value, isConflictRow, isConflictCol, isSuggested, accentColor]);
 
   const emissiveIntensity = useMemo(() => {
     if (isConflictRow || isConflictCol) return 0.7;
@@ -87,6 +97,14 @@ function Cell({
     }
   });
 
+  const ringColor = variant === "strategyA"
+    ? COLOR_A
+    : variant === "strategyB"
+    ? COLOR_B
+    : isConflictRow || isConflictCol
+    ? "#ff3355"
+    : "#00d4ff";
+
   return (
     <group position={[offsetX, 0, offsetZ]}>
       <RoundedBox
@@ -117,7 +135,7 @@ function Cell({
       {value === 1 && (
         <pointLight
           ref={glowRef}
-          color={isConflictRow || isConflictCol ? "#ff3355" : "#00ff88"}
+          color={isConflictRow || isConflictCol ? "#ff3355" : accentColor}
           intensity={isSelected ? 1.5 : 0.5}
           distance={2}
           position={[0, 0.5, 0]}
@@ -127,7 +145,7 @@ function Cell({
         <mesh position={[0, 0.2, 0]} rotation={[-Math.PI / 2, 0, 0]}>
           <ringGeometry args={[0.42, 0.48, 32]} />
           <meshBasicMaterial
-            color={isConflictRow || isConflictCol ? "#ff3355" : "#00d4ff"}
+            color={ringColor}
             transparent
             opacity={isConflictRow || isConflictCol ? 0.9 : 0.8}
           />
@@ -147,17 +165,19 @@ function RowLabel({
   row,
   totalRows,
   isConflict,
+  color = "#556677",
 }: {
   row: number;
   totalRows: number;
   isConflict: boolean;
+  color?: string;
 }) {
   const offsetZ = (row - totalRows / 2 + 0.5) * 1.3;
   return (
     <Text
       position={[-totalRows * 0.65 - 0.5, 0.2, offsetZ]}
       fontSize={0.4}
-      color={isConflict ? "#ff3355" : "#556677"}
+      color={isConflict ? "#ff3355" : color}
       anchorX="right"
       font="https://fonts.gstatic.com/s/jetbrainsmono/v18/tDbY2o-flEEny0FZhsfKu5WU4zr3E_BX0PnT8RD8yKxjPVmUsaaDhw.ttf"
     >
@@ -170,17 +190,19 @@ function ColLabel({
   col,
   totalCols,
   isConflict,
+  color = "#556677",
 }: {
   col: number;
   totalCols: number;
   isConflict: boolean;
+  color?: string;
 }) {
   const offsetX = (col - totalCols / 2 + 0.5) * 1.3;
   return (
     <Text
       position={[offsetX, 0.2, -totalCols * 0.65 - 0.5]}
       fontSize={0.4}
-      color={isConflict ? "#ff3355" : "#556677"}
+      color={isConflict ? "#ff3355" : color}
       anchorY="bottom"
       font="https://fonts.gstatic.com/s/jetbrainsmono/v18/tDbY2o-flEEny0FZhsfKu5WU4zr3E_BX0PnT8RD8yKxjPVmUsaaDhw.ttf"
     >
@@ -189,14 +211,14 @@ function ColLabel({
   );
 }
 
-function GridFloor({ totalRows, totalCols }: { totalRows: number; totalCols: number }) {
+function GridFloor({ totalRows, totalCols, tint }: { totalRows: number; totalCols: number; tint?: string }) {
   const width = totalCols * 1.3 + 0.5;
   const depth = totalRows * 1.3 + 0.5;
   return (
     <mesh position={[0, -0.15, 0]} rotation={[-Math.PI / 2, 0, 0]} receiveShadow>
       <planeGeometry args={[width, depth]} />
       <meshStandardMaterial
-        color="#0a0a1a"
+        color={tint ?? "#0a0a1a"}
         transparent
         opacity={0.6}
         roughness={0.8}
@@ -205,7 +227,34 @@ function GridFloor({ totalRows, totalCols }: { totalRows: number; totalCols: num
   );
 }
 
-function MatrixScene() {
+function StrategyHeader({
+  text,
+  icon,
+  color,
+  position,
+}: {
+  text: string;
+  icon: string;
+  color: string;
+  position: [number, number, number];
+}) {
+  return (
+    <Text
+      position={position}
+      fontSize={0.8}
+      color={color}
+      anchorX="center"
+      anchorY="middle"
+      outlineWidth={0.03}
+      outlineColor="#000"
+      font="https://fonts.gstatic.com/s/jetbrainsmono/v18/tDbY2o-flEEny0FZhsfKu5WU4zr3E_BX0PnT8RD8yKxjPVmUsaaDhw.ttf"
+    >
+      {`${icon}  ${text}`}
+    </Text>
+  );
+}
+
+function SingleMatrixScene() {
   const {
     matrix,
     rows,
@@ -255,9 +304,7 @@ function MatrixScene() {
               col={col}
               value={value}
               isSelected={selectedCells.has(key)}
-              isHovered={
-                hoveredCell?.row === row && hoveredCell?.col === col
-              }
+              isHovered={hoveredCell?.row === row && hoveredCell?.col === col}
               isConflictRow={conflictRows.has(row)}
               isConflictCol={conflictCols.has(col)}
               isSuggested={suggestedCells.has(key)}
@@ -301,23 +348,194 @@ function MatrixScene() {
   );
 }
 
+function CompareMatrixScene() {
+  const { matrix, rows, cols, strategyA, strategyB } = useStore();
+
+  const presetA = STRATEGY_PRESETS.find((p) => p.type === strategyA.type)!;
+  const presetB = STRATEGY_PRESETS.find((p) => p.type === strategyB.type)!;
+
+  const spacing = cols * 1.3 + 6;
+
+  return (
+    <>
+      <ambientLight intensity={0.25} color="#4466aa" />
+      <directionalLight position={[0, 18, 0]} intensity={1.0} color="#ffffff" castShadow />
+      <directionalLight position={[-8, 12, 5]} intensity={0.35} color={COLOR_A} />
+      <directionalLight position={[8, 12, 5]} intensity={0.35} color={COLOR_B} />
+
+      <StrategyHeader
+        text={`策略A · ${presetA.name}`}
+        icon={presetA.icon}
+        color={COLOR_A}
+        position={[-spacing / 2, rows > 10 ? 10 : 7, -rows * 0.7]}
+      />
+      <StrategyHeader
+        text={`策略B · ${presetB.name}`}
+        icon={presetB.icon}
+        color={COLOR_B}
+        position={[spacing / 2, rows > 10 ? 10 : 7, -rows * 0.7]}
+      />
+
+      <group position={[-spacing / 2, 0, 0]}>
+        <GridFloor totalRows={rows} totalCols={cols} tint="#0a1018" />
+        {matrix.map((rowData, row) =>
+          rowData.map((value, col) => {
+            const key = `a-${row},${col}`;
+            const res = strategyA.result;
+            let cr = false, cc = false;
+            if (res?.conflicts) {
+              for (const c of res.conflicts) {
+                if (c.type === "row" && c.indices.includes(row)) cr = true;
+                if (c.type === "col" && c.indices.includes(col)) cc = true;
+              }
+            }
+            return (
+              <Cell
+                key={key}
+                row={row}
+                col={col}
+                value={value}
+                isSelected={strategyA.selectedCells.has(`${row},${col}`)}
+                isHovered={false}
+                isConflictRow={cr}
+                isConflictCol={cc}
+                isSuggested={false}
+                totalRows={rows}
+                totalCols={cols}
+                variant="strategyA"
+                onClick={() => {}}
+                onPointerOver={() => {}}
+                onPointerOut={() => {}}
+              />
+            );
+          })
+        )}
+        {Array.from({ length: rows }, (_, i) => (
+          <RowLabel
+            key={`a-rl-${i}`}
+            row={i}
+            totalRows={rows}
+            isConflict={
+              !!strategyA.result?.conflicts?.some(
+                (c) => c.type === "row" && c.indices.includes(i)
+              )
+            }
+            color={COLOR_A + "88"}
+          />
+        ))}
+        {Array.from({ length: cols }, (_, j) => (
+          <ColLabel
+            key={`a-cl-${j}`}
+            col={j}
+            totalCols={cols}
+            isConflict={
+              !!strategyA.result?.conflicts?.some(
+                (c) => c.type === "col" && c.indices.includes(j)
+              )
+            }
+            color={COLOR_A + "88"}
+          />
+        ))}
+      </group>
+
+      <group position={[spacing / 2, 0, 0]}>
+        <GridFloor totalRows={rows} totalCols={cols} tint="#180a12" />
+        {matrix.map((rowData, row) =>
+          rowData.map((value, col) => {
+            const key = `b-${row},${col}`;
+            const res = strategyB.result;
+            let cr = false, cc = false;
+            if (res?.conflicts) {
+              for (const c of res.conflicts) {
+                if (c.type === "row" && c.indices.includes(row)) cr = true;
+                if (c.type === "col" && c.indices.includes(col)) cc = true;
+              }
+            }
+            return (
+              <Cell
+                key={key}
+                row={row}
+                col={col}
+                value={value}
+                isSelected={strategyB.selectedCells.has(`${row},${col}`)}
+                isHovered={false}
+                isConflictRow={cr}
+                isConflictCol={cc}
+                isSuggested={false}
+                totalRows={rows}
+                totalCols={cols}
+                variant="strategyB"
+                onClick={() => {}}
+                onPointerOver={() => {}}
+                onPointerOut={() => {}}
+              />
+            );
+          })
+        )}
+        {Array.from({ length: rows }, (_, i) => (
+          <RowLabel
+            key={`b-rl-${i}`}
+            row={i}
+            totalRows={rows}
+            isConflict={
+              !!strategyB.result?.conflicts?.some(
+                (c) => c.type === "row" && c.indices.includes(i)
+              )
+            }
+            color={COLOR_B + "88"}
+          />
+        ))}
+        {Array.from({ length: cols }, (_, j) => (
+          <ColLabel
+            key={`b-cl-${j}`}
+            col={j}
+            totalCols={cols}
+            isConflict={
+              !!strategyB.result?.conflicts?.some(
+                (c) => c.type === "col" && c.indices.includes(j)
+              )
+            }
+            color={COLOR_B + "88"}
+          />
+        ))}
+      </group>
+
+      <OrbitControls
+        makeDefault
+        minPolarAngle={0.2}
+        maxPolarAngle={Math.PI / 2.2}
+        minDistance={8}
+        maxDistance={60}
+        enableDamping
+        dampingFactor={0.05}
+      />
+    </>
+  );
+}
+
 export default function Matrix3D() {
+  const compareMode = useStore((s) => s.compareMode);
+
   return (
     <div className="w-full h-full bg-[#050510]">
       <Canvas
-        camera={{ position: [8, 10, 8], fov: 50 }}
+        camera={
+          compareMode
+            ? { position: [0, 12, 20], fov: 45 }
+            : { position: [8, 10, 8], fov: 50 }
+        }
         shadows
         gl={{ antialias: true, alpha: false }}
         onPointerMissed={() => useStore.getState().setHoveredCell(null)}
       >
         <color attach="background" args={["#050510"]} />
-        <fog attach="fog" args={["#050510", 20, 40]} />
-        <MatrixScene />
+        <fog attach="fog" args={["#050510", 20, 60]} />
+        {compareMode ? <CompareMatrixScene /> : <SingleMatrixScene />}
         <EffectComposer>
           <Bloom
             luminanceThreshold={0.2}
             luminanceSmoothing={0.9}
-            intensity={0.8}
+            intensity={compareMode ? 0.6 : 0.8}
           />
         </EffectComposer>
       </Canvas>
