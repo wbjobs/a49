@@ -190,7 +190,3 @@ export const useStore = create<AppState>((set, get) => ({
       suggestedCells: new Set<string>(),
     })),
 }));
-
-if (typeof window !== "undefined") {
-  (window as unknown as { __store: typeof useStore }).__store = useStore;
-}
